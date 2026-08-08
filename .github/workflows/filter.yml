@@ -8,11 +8,11 @@ on:
 jobs:
   filter:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -28,4 +28,4 @@ jobs:
           git config user.email "bot@github.com"
           git add configs/filtered/
           git commit -m "Daily filter: $(date +%Y-%m-%d)" || exit 0
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/benjackr/vpn-filter.git master
+          git push
