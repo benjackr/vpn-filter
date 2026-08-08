@@ -1,6 +1,6 @@
 /**
- * VPN Node Filter Script v2
- * 功能: 获取上游配置 → TCP测试 → 地域识别 → 解锁检测 → 生成订阅
+ * VPN Node Filter Script v3
+ * 测试内容: 安全性 | 地域 | 速度 | 稳定性 | 解锁情况
  */
 
 const https = require('https');
@@ -108,7 +108,7 @@ function parseTrojan(line) {
   }
 }
 
-// TCP 连通性测试
+// TCP 连通性测试（测速度）
 function testConnect(host, port, timeout = 5000) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -160,101 +160,106 @@ function httpGet(url, timeout = 5000) {
 // IP 地理信息获取
 async function getGeoInfo(host) {
   try {
-    const url = `https://ipinfo.io/${host}/json?token=`;
-    const result = await httpGet(url, 3000);
-    if (result.success) {
-      const data = await new Promise((resolve) => {
-        https.get(url, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(data));
-            } catch (e) {
-              resolve(null);
-            }
-          });
-        }).on('error', () => resolve(null));
-      });
-      if (data && data.country) {
-        return {
-          country: data.country,
-          countryName: data.country === 'US' ? '美国' : 
-                       data.country === 'JP' ? '日本' :
-                       data.country === 'DE' ? '德国' :
-                       data.country === 'GB' ? '英国' :
-                       data.country === 'SG' ? '新加坡' :
-                       data.country === 'HK' ? '香港' :
-                       data.country === 'TW' ? '台湾' :
-                       data.country === 'KR' ? '韩国' :
-                       data.country === 'FR' ? '法国' :
-                       data.country === 'CA' ? '加拿大' :
-                       data.country || data.country,
-          city: data.city || '',
-          org: data.org || ''
-        };
-      }
+    const url = `https://ipinfo.io/${host}/json`;
+    const data = await new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            resolve(null);
+          }
+        });
+      }).on('error', reject);
+    });
+    
+    if (data && data.country) {
+      const countryNames = {
+        'US': '美国', 'JP': '日本', 'DE': '德国', 'GB': '英国',
+        'FR': '法国', 'CA': '加拿大', 'HK': '香港', 'TW': '台湾',
+        'SG': '新加坡', 'KR': '韩国', 'AU': '澳大利亚', 'NL': '荷兰',
+        'SE': '瑞典', 'NO': '挪威', 'FI': '芬兰', 'DK': '丹麦',
+        'CH': '瑞士', 'AT': '奥地利', 'BE': '比利时', 'IE': '爱尔兰',
+        'IT': '意大利', 'ES': '西班牙', 'PT': '葡萄牙', 'PL': '波兰',
+        'CZ': '捷克', 'HU': '匈牙利', 'RO': '罗马尼亚', 'BG': '保加利亚',
+        'HR': '克罗地亚', 'SI': '斯洛文尼亚', 'SK': '斯洛伐克', 'LT': '立陶宛',
+        'LV': '拉脱维亚', 'EE': '爱沙尼亚', 'MT': '马耳他', 'CY': '塞浦路斯',
+        'BR': '巴西', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利',
+        'IN': '印度', 'ID': '印度尼西亚', 'TH': '泰国', 'VN': '越南',
+        'PH': '菲律宾', 'MY': '马来西亚', 'AZ': '阿塞拜疆', 'GE': '格鲁吉亚',
+        'RU': '俄罗斯', 'TR': '土耳其', 'UA': '乌克兰', 'KZ': '哈萨克斯坦'
+      };
+      
+      return {
+        country: data.country,
+        countryName: countryNames[data.country] || data.country,
+        city: data.city || '',
+        org: data.org || ''
+      };
     }
   } catch (e) {}
   return null;
 }
 
-// 解锁测试
-async function testUnlock(node, testType, testUrl) {
-  try {
-    // 使用节点的 SNI 作为测试目标（模拟通过该节点访问）
-    // 由于无法直接通过节点测试，我们通过 API 查询节点 IP 的解锁情况
-    const geo = await getGeoInfo(node.host);
-    if (!geo) return false;
-    
-    // 简化测试：检查是否是美国/日本/欧洲等常见解锁地区
-    const unlockedRegions = ['US', 'JP', 'DE', 'GB', 'FR', 'CA', 'HK', 'TW', 'SG', 'KR'];
-    return unlockedRegions.includes(geo.country);
-  } catch (e) {
-    return false;
+// 稳定性测试（连续3次连接）
+async function testStability(host, port, attempts = 3) {
+  const results = [];
+  for (let i = 0; i < attempts; i++) {
+    const result = await testConnect(host, port);
+    results.push(result);
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 100));
   }
+  
+  const successCount = results.filter(r => r.success).length;
+  const avgLatency = results.reduce((sum, r) => sum + (r.latency || 0), 0) / attempts;
+  
+  return {
+    success: successCount === attempts,
+    successRate: `${successCount}/${attempts}`,
+    avgLatency: Math.round(avgLatency),
+    details: results
+  };
 }
 
-// 快速解锁测试（批量）
-async function testUnlocks(nodes) {
+// 解锁测试
+async function testUnlocks(node) {
   const results = {};
   
-  for (const node of nodes) {
-    const key = `${node.host}:${node.port}`;
-    try {
-      const geo = await getGeoInfo(node.host);
-      results[key] = {
-        geo: geo || { country: 'Unknown', countryName: '未知' },
-        unlock: {
-          X: false,  // 需要进一步测试
-          Reddit: false,
-          HF: false
-        }
-      };
-    } catch (e) {
-      results[key] = {
-        geo: { country: 'Unknown', countryName: '未知' },
-        unlock: { X: false, Reddit: false, HF: false }
-      };
-    }
+  for (const [name, url] of Object.entries(UNLOCK_TESTS)) {
+    const result = await httpGet(url);
+    results[name] = result.success;
   }
   
   return results;
 }
 
 // 生成节点注释
-function generateComment(node, geoInfo, connectivity) {
+function generateComment(node, geoInfo, stability, unlocks) {
   const flag = getCountryFlag(geoInfo?.country || 'Unknown');
   const region = geoInfo?.countryName || '未知';
-  const latency = connectivity?.latency || 0;
+  const avgLatency = stability?.avgLatency || 0;
   const security = node.security?.toUpperCase() || 'UNKNOWN';
   
-  // 解锁状态（暂时用地区判断，后续可以加入真实测试）
-  const unlockedRegions = ['US', 'JP', 'DE', 'GB', 'FR', 'CA', 'HK', 'TW', 'SG', 'KR'];
-  const isUnlocked = unlockedRegions.includes(geoInfo?.country || '');
-  const unlockStatus = isUnlocked ? '✅' : '❌';
+  // 速度评级
+  let speedRating = '慢';
+  if (avgLatency < 50) speedRating = '快';
+  else if (avgLatency < 150) speedRating = '中';
+  else if (avgLatency > 300) speedRating = '极慢';
   
-  return `${flag} ${region} | ${latency}ms | ${security} | X:${unlockStatus} Reddit:${unlockStatus} HF:${unlockStatus}`;
+  // 稳定性评级
+  let stabilityRating = '中';
+  if (stability?.successRate === '3/3') stabilityRating = '稳';
+  else if (stability?.successRate === '2/3') stabilityRating = '中';
+  else stabilityRating = '差';
+  
+  // 解锁状态
+  const xStatus = unlocks?.X ? '✅' : '❌';
+  const redditStatus = unlocks?.Reddit ? '✅' : '❌';
+  const hfStatus = unlocks?.HF ? '✅' : '❌';
+  
+  return `${flag} ${region} | ${avgLatency}ms | ${speedRating} | ${stabilityRating} | ${security} | X:${xStatus} Reddit:${redditStatus} HF:${hfStatus}`;
 }
 
 // 国家代码转旗帜
@@ -270,9 +275,9 @@ function getCountryFlag(countryCode) {
     'HR': '🇭🇷', 'SI': '🇸🇮', 'SK': '🇸🇰', 'LT': '🇱🇹',
     'LV': '🇱🇻', 'EE': '🇪🇪', 'MT': '🇲🇹', 'CY': '🇨🇾',
     'BR': '🇧🇷', 'MX': '🇲🇽', 'AR': '🇦🇷', 'CL': '🇨🇱',
-    'CO': '🇨🇴', 'PE': '🇵🇪', 'VE': '🇻🇪', 'EC': '🇪🇨',
     'IN': '🇮🇳', 'ID': '🇮🇩', 'TH': '🇹🇭', 'VN': '🇻🇳',
-    'PH': '🇵🇭', 'MY': '🇲🇾', 'AZ': '🇦🇿', 'GE': '🇬🇪'
+    'PH': '🇵🇭', 'MY': '🇲🇾', 'AZ': '🇦🇿', 'GE': '🇬🇪',
+    'RU': '🇷🇺', 'TR': '🇹🇷', 'UA': '🇺🇦', 'KZ': '🇰🇿'
   };
   return flags[countryCode] || '🏳️';
 }
@@ -315,7 +320,8 @@ function getSecurityScore(node) {
 
 // 主函数
 async function main() {
-  console.log('=== VPN Node Filter v2 ===\n');
+  console.log('=== VPN Node Filter v3 ===');
+  console.log('测试: 安全性 | 地域 | 速度 | 稳定性 | 解锁情况\n');
   
   // 1. 获取配置
   console.log('1. Fetching configs...');
@@ -350,37 +356,63 @@ async function main() {
   }
   console.log(`   Unique: ${uniqueNodes.length}\n`);
   
-  // 4. 按安全性排序，取前 100 个测试
+  // 4. 按安全性排序，取前 50 个深度测试
   uniqueNodes.sort((a, b) => getSecurityScore(b) - getSecurityScore(a));
-  const toTest = uniqueNodes.slice(0, 100);
+  const toTest = uniqueNodes.slice(0, 50);
   
-  // 5. TCP 测试 + 地域识别
-  console.log('3. Testing connectivity & geo...');
+  // 5. 深度测试
+  console.log('3. Running deep tests (security + geo + speed + stability + unlocks)...');
   const tested = [];
   
-  for (const node of toTest) {
-    const [connectivity, geo] = await Promise.all([
-      testConnect(node.host, node.port),
-      getGeoInfo(node.host)
-    ]);
+  for (let i = 0; i < toTest.length; i++) {
+    const node = toTest[i];
+    process.stdout.write(`   [${i+1}/${toTest.length}] Testing ${node.host}:${node.port}... `);
     
-    tested.push({
-      ...node,
-      ...connectivity,
-      geo: geo || { country: 'Unknown', countryName: '未知' }
-    });
+    try {
+      // 并行测试：连接 + 地域 + 解锁
+      const [connectivity, geo, unlocks] = await Promise.all([
+        testStability(node.host, node.port),
+        getGeoInfo(node.host),
+        testUnlocks(node)
+      ]);
+      
+      tested.push({
+        ...node,
+        stability: connectivity,
+        geo: geo || { country: 'Unknown', countryName: '未知' },
+        unlocks
+      });
+      
+      const status = connectivity.success ? '✅' : '❌';
+      console.log(`${status} ${connectivity.avgLatency}ms ${geo?.countryName || '未知'}`);
+    } catch (e) {
+      console.log(`❌ Error: ${e.message}`);
+    }
   }
   
-  const working = tested.filter(n => n.success);
-  console.log(`   Working: ${working.length}/${tested.length}\n`);
+  const working = tested.filter(n => n.stability.success);
+  console.log(`\n=== Results ===`);
+  console.log(`Total tested: ${tested.length}`);
+  console.log(`Working: ${working.length}`);
+  console.log(`Reality: ${working.filter(n => n.security === 'reality').length}`);
+  console.log(`Countries: ${new Set(working.map(n => n.geo?.country)).size}`);
+  console.log(`X unlocked: ${working.filter(n => n.unlocks?.X).length}`);
+  console.log(`Reddit unlocked: ${working.filter(n => n.unlocks?.Reddit).length}`);
+  console.log(`HF unlocked: ${working.filter(n => n.unlocks?.HF).length}`);
   
-  // 6. 按延迟排序
-  working.sort((a, b) => a.latency - b.latency);
+  // 6. 按稳定性 + 解锁状态排序
+  working.sort((a, b) => {
+    // 优先解锁的
+    const aUnlock = (a.unlocks?.X ? 1 : 0) + (a.unlocks?.Reddit ? 1 : 0) + (a.unlocks?.HF ? 1 : 0);
+    const bUnlock = (b.unlocks?.X ? 1 : 0) + (b.unlocks?.Reddit ? 1 : 0) + (b.unlocks?.HF ? 1 : 0);
+    if (bUnlock !== aUnlock) return bUnlock - aUnlock;
+    // 然后按延迟
+    return a.stability.avgLatency - b.stability.avgLatency;
+  });
   
-  // 7. 生成订阅（带完整注释）
+  // 7. 生成订阅
   const subscription = working.map(n => {
-    const comment = generateComment(n, n.geo, n);
-    // 更新 raw 中的注释
+    const comment = generateComment(n, n.geo, n.stability, n.unlocks);
     const hashIndex = n.raw.indexOf('#');
     if (hashIndex >= 0) {
       return n.raw.slice(0, hashIndex + 1) + comment;
@@ -396,7 +428,9 @@ async function main() {
   
   fs.writeFileSync(
     path.join(outputDir, 'working.txt'),
-    `# VPN Filtered Nodes - ${new Date().toISOString()}\n# Working: ${working.length} | Reality: ${working.filter(n => n.security === 'reality').length}\n\n${subscription}`
+    `# VPN Filtered Nodes - ${new Date().toISOString()}\n` +
+    `# Working: ${working.length} | Reality: ${working.filter(n => n.security === 'reality').length}\n` +
+    `# Test: GitHub Actions (US) | ${tested.length} tested | ${working.length} working\n\n${subscription}`
   );
   
   // 统计
@@ -406,12 +440,16 @@ async function main() {
     tested: tested.length,
     working: working.length,
     reality: working.filter(n => n.security === 'reality').length,
-    tls: working.filter(n => n.security === 'tls').length,
     byCountry: working.reduce((acc, n) => {
       const c = n.geo?.country || 'Unknown';
       acc[c] = (acc[c] || 0) + 1;
       return acc;
-    }, {})
+    }, {}),
+    unlocked: {
+      X: working.filter(n => n.unlocks?.X).length,
+      Reddit: working.filter(n => n.unlocks?.Reddit).length,
+      HF: working.filter(n => n.unlocks?.HF).length
+    }
   };
   
   fs.writeFileSync(
@@ -419,12 +457,6 @@ async function main() {
     JSON.stringify(stats, null, 2)
   );
   
-  console.log('\n=== Summary ===');
-  console.log(`Total: ${stats.total}`);
-  console.log(`Tested: ${stats.tested}`);
-  console.log(`Working: ${stats.working}`);
-  console.log(`Reality: ${stats.reality}`);
-  console.log(`Countries: ${Object.keys(stats.byCountry).length}`);
   console.log(`\nOutput: configs/filtered/working.txt`);
 }
 
