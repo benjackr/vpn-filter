@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GH_TOKEN }}
+          persist-credentials: false
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -28,4 +28,4 @@ jobs:
           git config user.email "bot@github.com"
           git add configs/filtered/
           git commit -m "Daily filter: $(date +%Y-%m-%d)" || exit 0
-          git push
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/benjackr/vpn-filter.git master
