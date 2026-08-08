@@ -356,9 +356,9 @@ async function main() {
   }
   console.log(`   Unique: ${uniqueNodes.length}\n`);
   
-  // 4. 按安全性排序，取前 50 个深度测试
+  // 4. 按安全性排序，取前 200 个深度测试
   uniqueNodes.sort((a, b) => getSecurityScore(b) - getSecurityScore(a));
-  const toTest = uniqueNodes.slice(0, 50);
+  const toTest = uniqueNodes.slice(0, 200);
   
   // 5. 深度测试
   console.log('3. Running deep tests (security + geo + speed + stability + unlocks)...');
