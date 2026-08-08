@@ -1,6 +1,7 @@
 /**
- * VPN Node Filter Script v3
+ * VPN Node Filter Script v4
  * 测试内容: 安全性 | 地域 | 速度 | 稳定性 | 解锁情况
+ * 优化: 并行测试提升速度
  */
 
 const https = require('https');
@@ -162,7 +163,7 @@ async function getGeoInfo(host) {
   try {
     const url = `https://ipinfo.io/${host}/json`;
     const data = await new Promise((resolve, reject) => {
-      https.get(url, (res) => {
+      https.get(url, { timeout: 5000 }, (res) => {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
@@ -204,20 +205,20 @@ async function getGeoInfo(host) {
 }
 
 // 稳定性测试（连续3次连接）
-async function testStability(host, port, attempts = 3) {
+async function testStability(host, port) {
   const results = [];
-  for (let i = 0; i < attempts; i++) {
+  for (let i = 0; i < 3; i++) {
     const result = await testConnect(host, port);
     results.push(result);
-    if (i < attempts - 1) await new Promise(r => setTimeout(r, 100));
+    if (i < 2) await new Promise(r => setTimeout(r, 50));
   }
   
   const successCount = results.filter(r => r.success).length;
-  const avgLatency = results.reduce((sum, r) => sum + (r.latency || 0), 0) / attempts;
+  const avgLatency = results.reduce((sum, r) => sum + (r.latency || 0), 0) / 3;
   
   return {
-    success: successCount === attempts,
-    successRate: `${successCount}/${attempts}`,
+    success: successCount >= 2, // 至少2次成功算稳定
+    successRate: `${successCount}/3`,
     avgLatency: Math.round(avgLatency),
     details: results
   };
@@ -318,9 +319,46 @@ function getSecurityScore(node) {
   return 1;
 }
 
+// 并行测试多个节点
+async function testNodesBatch(nodes, batchSize = 20) {
+  const tested = [];
+  
+  for (let i = 0; i < nodes.length; i += batchSize) {
+    const batch = nodes.slice(i, i + batchSize);
+    const batchNum = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(nodes.length / batchSize);
+    
+    process.stdout.write(`   [Batch ${batchNum}/${totalBatches}] `);
+    
+    // 并行测试一批节点
+    const results = await Promise.all(batch.map(async (node, idx) => {
+      const globalIdx = i + idx;
+      process.stdout.write(`[${globalIdx + 1}/${nodes.length}]`);
+      
+      try {
+        // 并行测试：连接 + 地域 + 解锁
+        const [stability, geo, unlocks] = await Promise.all([
+          testStability(node.host, node.port),
+          getGeoInfo(node.host),
+          testUnlocks(node)
+        ]);
+        
+        return { node, stability, geo, unlocks };
+      } catch (e) {
+        return { node, stability: { success: false, avgLatency: 0 }, geo: null, unlocks: {} };
+      }
+    }));
+    
+    tested.push(...results);
+    console.log('');
+  }
+  
+  return tested;
+}
+
 // 主函数
 async function main() {
-  console.log('=== VPN Node Filter v3 ===');
+  console.log('=== VPN Node Filter v4 ===');
   console.log('测试: 安全性 | 地域 | 速度 | 稳定性 | 解锁情况\n');
   
   // 1. 获取配置
@@ -356,51 +394,28 @@ async function main() {
   }
   console.log(`   Unique: ${uniqueNodes.length}\n`);
   
-  // 4. 按安全性排序，测试所有节点
+  // 4. 按安全性排序
   uniqueNodes.sort((a, b) => getSecurityScore(b) - getSecurityScore(a));
-  const toTest = uniqueNodes;
   
-  // 5. 深度测试
+  // 5. 深度测试（并行）
   console.log('3. Running deep tests (security + geo + speed + stability + unlocks)...');
-  const tested = [];
+  console.log('   (This may take several minutes for', uniqueNodes.length, 'nodes)\n');
   
-  for (let i = 0; i < toTest.length; i++) {
-    const node = toTest[i];
-    process.stdout.write(`   [${i+1}/${toTest.length}] Testing ${node.host}:${node.port}... `);
-    
-    try {
-      // 并行测试：连接 + 地域 + 解锁
-      const [connectivity, geo, unlocks] = await Promise.all([
-        testStability(node.host, node.port),
-        getGeoInfo(node.host),
-        testUnlocks(node)
-      ]);
-      
-      tested.push({
-        ...node,
-        stability: connectivity,
-        geo: geo || { country: 'Unknown', countryName: '未知' },
-        unlocks
-      });
-      
-      const status = connectivity.success ? '✅' : '❌';
-      console.log(`${status} ${connectivity.avgLatency}ms ${geo?.countryName || '未知'}`);
-    } catch (e) {
-      console.log(`❌ Error: ${e.message}`);
-    }
-  }
+  const tested = await testNodesBatch(uniqueNodes, 50);
   
-  const working = tested.filter(n => n.stability.success);
+  // 6. 筛选可用节点
+  const working = tested.filter(r => r.stability.success);
+  
   console.log(`\n=== Results ===`);
   console.log(`Total tested: ${tested.length}`);
   console.log(`Working: ${working.length}`);
-  console.log(`Reality: ${working.filter(n => n.security === 'reality').length}`);
-  console.log(`Countries: ${new Set(working.map(n => n.geo?.country)).size}`);
-  console.log(`X unlocked: ${working.filter(n => n.unlocks?.X).length}`);
-  console.log(`Reddit unlocked: ${working.filter(n => n.unlocks?.Reddit).length}`);
-  console.log(`HF unlocked: ${working.filter(n => n.unlocks?.HF).length}`);
+  console.log(`Reality: ${working.filter(r => r.node.security === 'reality').length}`);
+  console.log(`Countries: ${new Set(working.map(r => r.geo?.country)).size}`);
+  console.log(`X unlocked: ${working.filter(r => r.unlocks?.X).length}`);
+  console.log(`Reddit unlocked: ${working.filter(r => r.unlocks?.Reddit).length}`);
+  console.log(`HF unlocked: ${working.filter(r => r.unlocks?.HF).length}`);
   
-  // 6. 按稳定性 + 解锁状态排序
+  // 7. 按解锁状态和延迟排序
   working.sort((a, b) => {
     // 优先解锁的
     const aUnlock = (a.unlocks?.X ? 1 : 0) + (a.unlocks?.Reddit ? 1 : 0) + (a.unlocks?.HF ? 1 : 0);
@@ -410,47 +425,43 @@ async function main() {
     return a.stability.avgLatency - b.stability.avgLatency;
   });
   
-  // 7. 生成订阅
-  const subscription = working.map(n => {
-    const comment = generateComment(n, n.geo, n.stability, n.unlocks);
-    const hashIndex = n.raw.indexOf('#');
+  // 8. 生成订阅
+  const subscription = working.map(r => {
+    const comment = generateComment(r.node, r.geo, r.stability, r.unlocks);
+    const hashIndex = r.node.raw.indexOf('#');
     if (hashIndex >= 0) {
-      return n.raw.slice(0, hashIndex + 1) + comment;
+      return r.node.raw.slice(0, hashIndex + 1) + comment;
     }
-    return n.raw + '#' + comment;
+    return r.node.raw + '#' + comment;
   }).join('\n');
   
-  // 8. 保存
+  // 9. 保存
   const outputDir = path.join(__dirname, '..', 'configs', 'filtered');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
   
-  fs.writeFileSync(
-    path.join(outputDir, 'working.txt'),
-    `# VPN Filtered Nodes - ${new Date().toISOString()}\n` +
-    `# Working: ${working.length} | Reality: ${working.filter(n => n.security === 'reality').length}\n` +
-    `# Test: GitHub Actions (US) | ${tested.length} tested | ${working.length} working\n\n${subscription}`
-  );
-  
-  // 统计
   const stats = {
     timestamp: new Date().toISOString(),
     total: uniqueNodes.length,
     tested: tested.length,
     working: working.length,
-    reality: working.filter(n => n.security === 'reality').length,
-    byCountry: working.reduce((acc, n) => {
-      const c = n.geo?.country || 'Unknown';
-      acc[c] = (acc[c] || 0) + 1;
-      return acc;
-    }, {}),
+    reality: working.filter(r => r.node.security === 'reality').length,
+    countries: [...new Set(working.map(r => r.geo?.country))],
     unlocked: {
-      X: working.filter(n => n.unlocks?.X).length,
-      Reddit: working.filter(n => n.unlocks?.Reddit).length,
-      HF: working.filter(n => n.unlocks?.HF).length
+      X: working.filter(r => r.unlocks?.X).length,
+      Reddit: working.filter(r => r.unlocks?.Reddit).length,
+      HF: working.filter(r => r.unlocks?.HF).length
     }
   };
+  
+  fs.writeFileSync(
+    path.join(outputDir, 'working.txt'),
+    `# VPN Filtered Nodes - ${stats.timestamp}\n` +
+    `# Working: ${stats.working} | Reality: ${stats.reality}\n` +
+    `# Test: GitHub Actions (US) | ${stats.tested} tested | ${stats.working} working\n` +
+    `# Unlocked: X=${stats.unlocked.X}, Reddit=${stats.unlocked.Reddit}, HF=${stats.unlocked.HF}\n\n${subscription}`
+  );
   
   fs.writeFileSync(
     path.join(outputDir, 'stats.json'),
