@@ -1,22 +1,30 @@
 {
-  "timestamp": "2026-08-08T04:07:17.091Z",
+  "timestamp": "2026-08-08T04:51:10.935Z",
   "total": 1949,
-  "tested": 50,
-  "working": 37,
-  "reality": 37,
+  "tested": 200,
+  "working": 103,
+  "reality": 103,
   "byCountry": {
-    "US": 4,
-    "NL": 7,
-    "DE": 4,
-    "FR": 1,
-    "PL": 4,
-    "Unknown": 9,
-    "RU": 7,
-    "FI": 1
+    "US": 6,
+    "NL": 10,
+    "BE": 1,
+    "FR": 2,
+    "DE": 12,
+    "PL": 6,
+    "ES": 1,
+    "FI": 4,
+    "EE": 1,
+    "SE": 1,
+    "HU": 5,
+    "CZ": 1,
+    "TR": 13,
+    "RU": 13,
+    "LT": 1,
+    "Unknown": 26
   },
   "unlocked": {
-    "X": 37,
+    "X": 103,
     "Reddit": 0,
-    "HF": 37
+    "HF": 103
   }
 }
